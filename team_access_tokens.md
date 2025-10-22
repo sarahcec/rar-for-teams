@@ -2,7 +2,7 @@
 
 ## Abstract
 
-This document defines a profile of OAuth 2.0 Rich Authorization Requests (RAR) [RFC9396] for requesting access tokens that grant permissions based on the collective access rights of a team, rather than an individual user. It introduces a new authorization details type that allows clients to specify a team identifier, its members (using "sub_ids" as an array of subject identifiers, consistent with usage in Security Event Token profiles such as RISC events), and an operand ("AND" or "OR") to determine how individual team member permissions are combined (intersection or union). This enables scenarios where applications need to act on behalf of a group, such as shared resource access in collaborative environments.
+This document defines a profile of OAuth 2.0 Rich Authorization Requests (RAR) [RFC9396] for requesting access tokens that grant permissions to a workload acting on behalf of a team, rather than an individual user. It introduces a new authorization details type that allows clients to specify a team identifier, its members (using "sub_ids" as an array of subject identifiers, consistent with Security Event Token profiles such as RISC events), and an operand ("AND" or "OR") to determine how team member permissions are combined (intersection or union). The resulting access token uses a workload identifier in the `sub` claim, and its permissions are restricted to the intersection of the workload’s permissions and the team’s aggregated permissions, ensuring the workload cannot use team access tokens to accomplish privilege escalation.
 
 ## Status of This Memo
 
@@ -36,11 +36,11 @@ This document is subject to BCP 78 and the IETF Trust's Legal Provisions Relatin
 
 ## 1. Introduction
 
-OAuth 2.0 [RFC6749] and its extension, Rich Authorization Requests (RAR) [RFC9396], provide mechanisms for clients to request fine-grained authorizations from an Authorization Server (AS). Traditionally, these authorizations are tied to an individual user's permissions. However, in collaborative or team-based scenarios, applications may need to request access on behalf of a group (e.g., a project team accessing shared resources).
+OAuth 2.0 [RFC6749] and its extension, Rich Authorization Requests (RAR) [RFC9396], provide mechanisms for clients to request fine-grained authorizations from an Authorization Server (AS). Traditionally, these authorizations are tied to an individual user's permissions. However, in collaborative or team-based scenarios, a workload (e.g. an automated service or AI agent) may need to request access on behalf of a group, such as a project team accessing shared resources.
 
-This profile defines a new authorization details type for RAR, enabling clients to request "team access tokens." These tokens grant access based on the aggregated permissions of team members. The aggregation is controlled by an operand: "OR" for the union of all members' permissions (access to any resource any member can access) or "AND" for the intersection (access only to resources all members can access).
+This profile defines a new authorization details type for RAR, enabling clients to request "team access tokens" for workloads. These tokens grant access based on the aggregated permissions of team members, restricted by the workload’s inherent permissions. The aggregation is controlled by an operand: "OR" for the union of all members' permissions (access to any resource any member can access) or "AND" for the intersection (access only to resources all members can access). The access token’s permissions are further limited to those allowed for the workload, ensuring that team permissions do not grant the workload additional privileges (e.g., if the workload cannot delete repositories, it will not gain that ability even if a team member can).
 
-This profile assumes the AS has knowledge of individual user permissions and can resolve team memberships. It is intended for deployments where team-based delegation is required, such as enterprise collaboration tools.
+The team identifier and member identifiers are strings, with no specific format required. For clarity, examples in this document use URIs for team identifiers and email addresses for member identifiers, but these are illustrative and not normative. This profile assumes the AS has knowledge of individual user permissions, team memberships, and workload permissions. It is intended for deployments requiring team-based delegation, such as enterprise collaboration tools.
 
 The authorization details type defined here is "urn:ietf:params:oauth:rar:type:team_access" to ensure uniqueness across deployments.
 
@@ -52,64 +52,69 @@ This specification uses the terms "authorization_details", "Authorization Server
 
 Additional terms:
 
-- **Team**: A group of users identified by a team identifier, with associated member subject identifiers.
+- **Team**: A group of users identified by a string identifier, with associated member subject identifiers.
 - **Operand**: A string value ("AND" or "OR") specifying how to combine permissions across team members.
+- **Workload**: An automated service or application identified by a unique identifier, acting on behalf of a team.
 
 ## 3. Team Access Authorization Details Type
 
-Clients requesting a team access token MUST include an authorization details object of type "urn:ietf:params:oauth:rar:type:team_access" in the "authorization_details" parameter of the authorization request or token request, as defined in [RFC9396].
+Clients requesting a team access token for a workload MUST include an authorization details object of type "urn:ietf:params:oauth:rar:type:team_access" in the "authorization_details" parameter of the authorization request or token request, as defined in [RFC9396].
 
-The AS MUST process this type by resolving the permissions of each team member and aggregating them according to the specified operand. The resulting access token MUST reflect the combined permissions.
+The AS MUST process this type by resolving the permissions of each team member, aggregating them according to the specified operand, and intersecting the result with the workload’s permissions. The resulting access token MUST reflect these constrained permissions, with the `sub` claim set to the workload’s identifier.
 
-If the requester (e.g., the authenticated user) is not authorized to request on behalf of the team (e.g., not a team member or administrator), the AS MUST reject the request with an error as per [RFC9396] Section 5.
+If the AS does not have valid consent from each team member, the AS MUST reject the request with an error as per [RFC9396] Section 5. The mechanism by which the AS validates consent is out of scope for this specification.
 
 ### 3.1. Structure of the Authorization Details Object
 
 The authorization details object for this type MUST contain the following REQUIRED fields:
 
-- **team_id**: A string identifying the team (e.g., "avengers"). This MUST be a unique identifier known to the AS.
-- **sub_ids**: A JSON array of strings, each representing a subject identifier (sub) for a team member. This follows the usage of "sub_ids" in Security Event Token (SET) profiles, such as in RISC events for multiple subjects.
+- **team**: An object containing team identification and member information:
+  - **team_id**: A string identifying the team. This MUST be a unique identifier known to the AS. Examples in this document use URIs (e.g., "https://example.com/teams/avengers") for clarity, but any string format is allowed.
+  - **sub_ids**: A JSON array of strings, each representing a subject identifier for a team member. This follows the usage of "sub_ids" in Security Event Token (SET) profiles, such as in RISC events for multiple subjects. Examples in this document use email addresses (e.g., "tony.stark@example.com") for clarity, but any string format is allowed.
 - **operand**: A string with value "AND" or "OR":
-  - "OR": Grant access to the union of resources accessible by any team member.
-  - "AND": Grant access only to the intersection of resources accessible by all team members.
+  - "OR": Aggregate the union of resources accessible by any team member.
+  - "AND": Aggregate the intersection of resources accessible by all team members.
 
 The object MAY include additional fields as defined by the AS policy or extensions.
 
-The "sub_ids" field nests the team members under the team context, as they are associated with the "team_id".
+The "sub_ids" field is nested within the "team" object, associating the team members with the team context.
 
 ### 3.2. Processing Rules
 
-1. The AS MUST validate the "team_id" and confirm that the provided "sub_ids" match the team's membership (as known to the AS).
-2. The AS MUST retrieve the individual permissions for each sub in "sub_ids".
+1. The AS MUST validate that it has consent from each team member identified in the "sub_ids" array within the "team" object.
+2. The AS MUST retrieve the individual permissions for each identifier in "sub_ids".
 3. The AS MUST aggregate permissions:
-   - For "OR": Union of all permissions.
-   - For "AND": Intersection of all permissions.
-4. If aggregation results in no permissions, the AS SHOULD reject the request.
-5. The AS MUST include the processed "authorization_details" in the access token (e.g., as a JWT claim) or introspection response, as per [RFC9396] Section 9.
-6. The resulting token's "sub" claim MAY represent the team (e.g., "team:avengers") or the requester, with the team details in "authorization_details".
+   - For "OR": Union of all team members' permissions.
+   - For "AND": Intersection of all team members' permissions.
+4. The AS MUST intersect the aggregated team permissions with the permissions of the workload (identified in the `sub` claim of the token).
+5. If the final permissions are empty (e.g. no overlap between team and workload permissions), the AS MUST reject the request with an `invalid_authorization_details` error.
+6. The AS MUST include the processed "authorization_details" in the access token (e.g., as a JWT claim) or introspection response, as per [RFC9396] Section 9.
+7. The resulting token's `sub` claim MUST represent the workload.
 
 ## 4. Examples
 
-The following example requests a team access token for the "avengers" team using the "OR" operand:
+The following example requests a team access token for a workload acting on behalf of the "avengers" team using the "OR" operand:
 
 ```json
 [
    {
       "type": "urn:ietf:params:oauth:rar:type:team_access",
-      "team_id": "avengers",
-      "sub_ids": [
-         "tony_stark",
-         "steve_rogers",
-         "thor_odinson",
-         "bruce_banner",
-         "natasha_romanoff"
-      ],
+      "team": {
+         "team_id": "https://example.com/teams/avengers",
+         "sub_ids": [
+            "tony.stark@example.com",
+            "steve.rogers@example.com",
+            "thor.odinson@example.com",
+            "bruce.banner@example.com",
+            "natasha.romanoff@example.com"
+         ]
+      },
       "operand": "OR"
    }
 ]
 ```
 
-This requests access to any resource that any Avenger has permission to access.
+This requests access to any resource that any Avenger has permission to access, limited to the permissions of the workload.
 
 For "AND":
 
@@ -117,24 +122,26 @@ For "AND":
 [
    {
       "type": "urn:ietf:params:oauth:rar:type:team_access",
-      "team_id": "avengers",
-      "sub_ids": [
-         "tony_stark",
-         "steve_rogers",
-         "thor_odinson",
-         "bruce_banner",
-         "natasha_romanoff"
-      ],
+      "team": {
+         "team_id": "https://example.com/teams/avengers",
+         "sub_ids": [
+            "tony.stark@example.com",
+            "steve.rogers@example.com",
+            "thor.odinson@example.com",
+            "bruce.banner@example.com",
+            "natasha.romanoff@example.com"
+         ]
+      },
       "operand": "AND"
    }
 ]
 ```
 
-This requests access only to resources that all Avengers have in common.
+This requests access only to resources that all Avengers have in common, limited to the permissions of the workload.
 
 ## 5. Token Response
 
-The token response follows [RFC9396] Section 7. The "authorization_details" in the response MUST reflect the aggregated permissions, potentially enriched or filtered by the AS.
+The token response follows [RFC9396] Section 7. The "authorization_details" in the response MUST reflect the aggregated permissions, intersected with the workload’s permissions, and potentially enriched or filtered by the AS. The `sub` claim MUST identify the workload.
 
 Example response (abridged):
 
@@ -143,11 +150,20 @@ Example response (abridged):
    "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
    "token_type": "Bearer",
    "expires_in": 3600,
+   "sub": "workload:jarvis",
    "authorization_details": [
       {
          "type": "urn:ietf:params:oauth:rar:type:team_access",
-         "team_id": "avengers",
-         "sub_ids": ["tony_stark", "steve_rogers", "thor_odinson", "bruce_banner", "natasha_romanoff"],
+         "team": {
+            "team_id": "https://example.com/teams/avengers",
+            "sub_ids": [
+               "tony.stark@example.com",
+               "steve.rogers@example.com",
+               "thor.odinson@example.com",
+               "bruce.banner@example.com",
+               "natasha.romanoff@example.com"
+            ]
+         },
          "operand": "OR"
       }
    ]
@@ -156,17 +172,13 @@ Example response (abridged):
 
 ## 6. Security Considerations
 
-- **Team Membership Validation**: The AS MUST verify team membership to prevent unauthorized inclusion of subjects.
-- **Permission Aggregation Risks**: "OR" may grant broader access than intended; "AND" may be too restrictive. Clients SHOULD use the minimal operand needed.
-- **Requester Authorization**: The AS MUST ensure the requester (client or user) has authority to request team access (e.g., team admin).
-- **Token Binding**: Use token binding mechanisms to prevent token theft, as team tokens may have elevated privileges.
-- All considerations from [RFC9396] and [RFC6749] apply.
+- **Workload Permission Restriction**: It is the duty of the protected resource to ensure that the workload’s permissions do not exceed those the workload would have when acting on behalf of itself. For example, if the workload is not permitted to delete repositories, it MUST NOT gain this ability even if a team member has such permissions.
+- **Permission Aggregation Risks**: The "OR" operand may grant broader access than any one individual has. If the protected resource is shared with the team, team members may gain access that they previously did not have.
 
 ## 7. Privacy Considerations
 
-- **Data Aggregation**: Combining permissions may reveal sensitive information about individual members' accesses.
-- **Minimal Disclosure**: The AS SHOULD minimize exposed details in tokens and introspection responses.
-- **Consent**: If user consent is required, clearly explain the aggregation implications.
+- **Data Aggregation**: Combining permissions may reveal sensitive information about individual members’ accesses.
+- **Consent**: If user consent is required, clearly explain the aggregation and workload restriction implications.
 - All considerations from [RFC9396] Section 13 apply.
 
 ## 8. IANA Considerations
@@ -187,20 +199,12 @@ Leiba, B., "Ambiguity of Uppercase vs Lowercase in RFC 2119 Key Words", BCP 14, 
 [RFC9396]  
 Lodderstedt, T., Richer, J., and B. Campbell, "OAuth 2.0 Rich Authorization Requests", RFC 9396, DOI 10.17487/RFC9396, May 2023, <https://www.rfc-editor.org/info/rfc9396>.
 
-## Acknowledgments
-
-The authors thank the contributors to RFC 9396, as this profile builds upon it.
-
 ## Authors' Addresses
 
 Sarah Cecchetti  
 Beyond Identity  
-Email: sarah@beyondidentity.com  
 
 Justin Richer  
 MongoDB  
-Email: justin.richer@mongodb.com  
 
 George Fletcher  
-Email: george.fletcher@example.com
-```
