@@ -1,4 +1,3 @@
-```markdown
 # OAuth 2.0 Rich Authorization Requests Profile: Team Access Tokens
 
 ## Abstract
