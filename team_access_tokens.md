@@ -150,7 +150,7 @@ Example response (abridged):
    "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
    "token_type": "Bearer",
    "expires_in": 3600,
-   "sub": "workload:jarvis",
+   "sub": "spiffe://example.com/workload/jarvis",
    "authorization_details": [
       {
          "type": "urn:ietf:params:oauth:rar:type:team_access",
