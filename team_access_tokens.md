@@ -172,7 +172,7 @@ Example response (abridged):
 
 ## 6. Security Considerations
 
-- **Workload Permission Restriction**: It is the duty of the protected resource to ensure that the workload’s permissions do not exceed those the workload would have when acting on behalf of itself. For example, if the workload is not permitted to delete repositories, it MUST NOT gain this ability even if a team member has such permissions.
+- **Workload Permission Restriction**: It is the duty of the protected resource to ensure that the workload’s access does not exceed what the workload could access when acting on behalf of itself. For example, if the workload is not permitted to delete repositories, it MUST NOT gain this ability even if a team member has such permissions.
 - **Permission Aggregation Risks**: The "OR" operand may grant broader access than any one individual has. If the protected resource is shared with the team, team members may gain access that they previously did not have.
 
 ## 7. Privacy Considerations
